@@ -26,8 +26,12 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK Licenses
+        run: |
+          SDK_MGR=$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -name sdkmanager | head -n 1)
+          if [ -n "$SDK_MGR" ]; then
+            yes | "$SDK_MGR" --licenses > /dev/null 2>&1 || true
+          fi
 
       - name: Build Frontend & Sync Capacitor Android
         working-directory: frontend

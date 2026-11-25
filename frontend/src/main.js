@@ -4,6 +4,7 @@ import { ChessBoardUI } from './board.js';
 import {
   analyzePosition,
   checkHealth,
+  fetchLevelStep,
   fetchSampleGames,
   getServerUrl,
   isNativeApp,
@@ -33,13 +34,23 @@ const state = {
     uciHistory: [],
     humanColor: 'w',
     tobyElo: 1800,
-    humanElo: 1800,
+    humanStartElo: 1800,
+    liveElo: 1800,
+    liveDelta: 0,
+    liveGrid: null,
+    liveCurve: null,
+    liveMovesCount: 0,
+    liveFeedback: '',
+    liveSnapshots: [],
     timeControl: 'Classical',
     ratingSource: 'FIDE',
     samplingMode: 'human',
     thinking: false,
+    evalEnabled: false,
+    evalShowArrows: false,
+    evalLoading: false,
+    liveEval: null,
     lastAnalysis: null,
-    showCoach: true,
     board: null,
   },
 
@@ -188,6 +199,7 @@ function mountApp() {
                 <span class="player-avatar black" id="play-top-avatar">T</span>
                 <span class="player-name" id="play-top-name">Toby 2</span>
                 <span class="player-elo" id="play-top-elo">1800</span>
+                <span class="elo-delta hidden" id="play-top-delta"></span>
               </div>
               <span class="turn-tag" id="play-top-turn"></span>
             </div>
@@ -199,8 +211,14 @@ function mountApp() {
                 <span class="player-avatar white" id="play-bottom-avatar">S</span>
                 <span class="player-name" id="play-bottom-name">Sen</span>
                 <span class="player-elo" id="play-bottom-elo">1800</span>
+                <span class="elo-delta hidden" id="play-bottom-delta"></span>
               </div>
               <span class="turn-tag" id="play-bottom-turn">Hamle sırası sende</span>
+            </div>
+
+            <div class="live-elo-note hidden" id="play-live-elo-note">
+              <span id="play-live-elo-summary">Canlı Performans ELO</span>
+              <span id="play-live-move-feedback"></span>
             </div>
 
             <div class="wdl-wrap">
@@ -222,6 +240,18 @@ function mountApp() {
                 <span>Oyun Kontrolleri</span>
                 <span class="badge badge-gold" id="play-status-badge">Devam Ediyor</span>
               </div>
+
+              <label class="toggle-row" for="chk-live-eval">
+                <div>
+                  <div class="toggle-label">Canlı Toby Değerlendirme</div>
+                  <div class="toggle-sub">Her konumda insan olasılıkları &amp; WDL tablosu</div>
+                </div>
+                <span class="switch">
+                  <input type="checkbox" id="chk-live-eval" />
+                  <span class="slider"></span>
+                </span>
+              </label>
+
               <div class="btn-row" style="margin-bottom:10px">
                 <button class="btn btn-primary btn-sm" id="btn-new-game">Yeni Oyun</button>
                 <button class="btn btn-sm" id="btn-play-hint">Toby İpucu</button>
@@ -233,9 +263,45 @@ function mountApp() {
               </button>
             </div>
 
+            <!-- Yosha-style Live Toby Evaluation Panel (toggleable) -->
+            <div class="card hidden" id="play-eval-card">
+              <div class="eval-panel-head">
+                <div>
+                  <div class="card-title" style="margin:0">Toby Değerlendirme</div>
+                  <div class="brand-sub" id="play-eval-meta">Beyaz bakış açısıyla WDL</div>
+                </div>
+                <label class="mini-check">
+                  <input type="checkbox" id="chk-eval-arrows" />
+                  <span>Oklar</span>
+                </label>
+              </div>
+
+              <div class="eval-pos-box">
+                <div class="eval-pos-top">
+                  <span class="eval-pos-title">Pozisyon (Ağırlıklı)</span>
+                  <span class="eval-pos-es" id="play-eval-pos-es">—</span>
+                </div>
+                <div class="wdl-stacked" id="play-eval-pos-wdl"></div>
+              </div>
+
+              <div class="eval-table-head">
+                <span>Hamle</span>
+                <span>Toby / Ağ</span>
+                <span>Beyaz · Ber · Siyah</span>
+                <span style="text-align:right">Skor</span>
+              </div>
+              <div class="eval-move-list" id="play-eval-moves">
+                <span style="color:var(--ink-dim);font-size:12px">Değerlendirme hesaplanıyor...</span>
+              </div>
+            </div>
+
             <div class="card">
               <div class="card-title">Toby 2 Oyun Ayarları</div>
               <div class="form-grid">
+                <div class="field full">
+                  <label>Senin Başlangıç ELO'n <strong id="lbl-human-elo">1800</strong></label>
+                  <input type="range" id="rng-human-elo" min="800" max="2900" step="50" value="1800" />
+                </div>
                 <div class="field full">
                   <label>Toby ELO Seviyesi <strong id="lbl-toby-elo">1800</strong></label>
                   <input type="range" id="rng-toby-elo" min="800" max="2900" step="50" value="1800" />
@@ -631,6 +697,140 @@ async function loadSamples() {
 }
 
 // ---------- PLAY VIEW LOGIC ----------
+function renderStackedWdlHtml(whiteWdl) {
+  const [w, d, b] = wdlToPercents(whiteWdl);
+  return `
+    <div class="wdl-seg wdl-seg-w" style="width:${w}%">${w >= 14 ? `${w}%` : ''}</div>
+    <div class="wdl-seg wdl-seg-d" style="width:${d}%">${d >= 14 ? `${d}%` : ''}</div>
+    <div class="wdl-seg wdl-seg-b" style="width:${b}%">${b >= 14 ? `${b}%` : ''}</div>
+  `;
+}
+
+function renderLiveEvalPanel() {
+  const p = state.play;
+  const card = document.getElementById('play-eval-card');
+  if (!card) return;
+  if (!p.evalEnabled) {
+    card.classList.add('hidden');
+    return;
+  }
+  card.classList.remove('hidden');
+
+  const metaEl = document.getElementById('play-eval-meta');
+  const posEsEl = document.getElementById('play-eval-pos-es');
+  const posWdlEl = document.getElementById('play-eval-pos-wdl');
+  const movesEl = document.getElementById('play-eval-moves');
+
+  if (p.evalLoading) {
+    metaEl.textContent = 'Toby hesaplıyor...';
+  }
+
+  const data = p.liveEval;
+  if (!data || !data.moves || !data.moves.length) {
+    posEsEl.textContent = '—';
+    posWdlEl.innerHTML = renderStackedWdlHtml(null);
+    movesEl.innerHTML = p.evalLoading
+      ? '<span style="color:var(--ink-dim);font-size:12px">Toby 2 pozisyonu değerlendiriyor...</span>'
+      : '<span style="color:var(--ink-dim);font-size:12px">Hamle bekleniyor.</span>';
+    return;
+  }
+
+  const sideText = data.turn === 'w' ? 'Beyaz hamlede' : 'Siyah hamlede';
+  metaEl.textContent = `${sideText} · ${(data.elapsed_ms / 1000).toFixed(1)} sn`;
+
+  if (data.white_wdl) {
+    const [w, d] = wdlToPercents(data.white_wdl);
+    const whiteEs = (w + d * 0.5).toFixed(1);
+    posEsEl.textContent = `Beyaz %${whiteEs}`;
+    posWdlEl.innerHTML = renderStackedWdlHtml(data.white_wdl);
+  }
+
+  movesEl.innerHTML = data.moves
+    .slice(0, 6)
+    .map((m) => {
+      const wWdl = m.white_wdl || m.wdl;
+      const [w, d] = wdlToPercents(wWdl);
+      const whiteEs = (w + d * 0.5).toFixed(0);
+      return `
+        <div class="eval-move-row">
+          <span class="move-san">${m.san}</span>
+          <div class="eval-prob-col">
+            <span class="eval-prob-main">%${m.prob_pct}</span>
+            ${m.net_prob_pct != null ? `<span class="eval-prob-net">Ağ %${m.net_prob_pct}</span>` : ''}
+          </div>
+          <div class="wdl-stacked">${renderStackedWdlHtml(wWdl)}</div>
+          <span class="eval-es-col">%${whiteEs}</span>
+        </div>
+      `;
+    })
+    .join('');
+
+  if (p.evalShowArrows && !p.thinking) {
+    p.board.setArrows(
+      data.moves.slice(0, 3).map((m, idx) => ({
+        from: m.uci.slice(0, 2),
+        to: m.uci.slice(2, 4),
+        prob: m.prob,
+        label: `%${Math.round(m.prob_pct)}`,
+        color: idx === 0 ? '#c99b52' : '#4e9f72',
+      }))
+    );
+  }
+}
+
+async function refreshLiveEval() {
+  const p = state.play;
+  if (!p.evalEnabled || p.chess.isGameOver()) return;
+  p.evalLoading = true;
+  renderLiveEvalPanel();
+  try {
+    const whiteElo = p.humanColor === 'w' ? p.liveElo : p.tobyElo;
+    const blackElo = p.humanColor === 'b' ? p.liveElo : p.tobyElo;
+    const res = await analyzePosition({
+      moves: p.uciHistory,
+      white_rating: whiteElo,
+      black_rating: blackElo,
+      time_control: p.timeControl,
+      rating_source: p.ratingSource,
+    });
+    p.liveEval = res;
+    if (res.white_wdl) renderWdlBar('play', res.white_wdl);
+  } catch {
+    // non-fatal during play
+  } finally {
+    p.evalLoading = false;
+    renderLiveEvalPanel();
+  }
+}
+
+async function updateLiveEloAfterHumanMove(movesBefore, playedUci) {
+  const p = state.play;
+  try {
+    const res = await fetchLevelStep({
+      moves_before: movesBefore,
+      played_uci: playedUci,
+      start_elo: p.humanStartElo,
+      opp_elo: p.tobyElo,
+      time_control: p.timeControl,
+      prev_grid: p.liveGrid,
+      prev_curve: p.liveCurve,
+      moves_count: p.liveMovesCount,
+    });
+    p.liveElo = res.live_elo;
+    p.liveDelta = res.delta;
+    p.liveGrid = res.grid;
+    p.liveCurve = res.sum_curve;
+    p.liveMovesCount = res.moves_count;
+    const predTxt = res.predicted
+      ? `Toby tahmini (%${res.played_prob_pct})`
+      : `${res.classification?.label || ''} (%${res.played_prob_pct})`;
+    p.liveFeedback = `${res.played_san} · ${predTxt}`;
+    updatePlayUI();
+  } catch {
+    // non-fatal; keep playing
+  }
+}
+
 function updatePlayUI() {
   const p = state.play;
   const hist = p.chess.history({ verbose: true });
@@ -644,12 +844,39 @@ function updatePlayUI() {
 
   document.getElementById('play-top-name').textContent = topIsHuman ? 'Sen' : 'Toby 2';
   document.getElementById('play-bottom-name').textContent = topIsHuman ? 'Toby 2' : 'Sen';
-  document.getElementById('play-top-elo').textContent = String(topIsHuman ? p.humanElo : p.tobyElo);
-  document.getElementById('play-bottom-elo').textContent = String(topIsHuman ? p.tobyElo : p.humanElo);
+  document.getElementById('play-top-elo').textContent = String(topIsHuman ? p.liveElo : p.tobyElo);
+  document.getElementById('play-bottom-elo').textContent = String(topIsHuman ? p.tobyElo : p.liveElo);
   document.getElementById('play-top-avatar').className = `player-avatar ${topIsWhite ? 'white' : 'black'}`;
   document.getElementById('play-top-avatar').textContent = topIsHuman ? 'S' : 'T';
   document.getElementById('play-bottom-avatar').className = `player-avatar ${topIsWhite ? 'black' : 'white'}`;
   document.getElementById('play-bottom-avatar').textContent = topIsHuman ? 'T' : 'S';
+
+  // Live ELO delta badge on the human's strip
+  const topDeltaEl = document.getElementById('play-top-delta');
+  const botDeltaEl = document.getElementById('play-bottom-delta');
+  const humanDeltaEl = topIsHuman ? topDeltaEl : botDeltaEl;
+  const tobyDeltaEl = topIsHuman ? botDeltaEl : topDeltaEl;
+  tobyDeltaEl.classList.add('hidden');
+
+  if (p.liveMovesCount > 0) {
+    const sign = p.liveDelta > 0 ? '+' : '';
+    humanDeltaEl.textContent = `${sign}${p.liveDelta}`;
+    humanDeltaEl.className = `elo-delta ${p.liveDelta > 0 ? 'up' : p.liveDelta < 0 ? 'down' : 'flat'}`;
+  } else {
+    humanDeltaEl.classList.add('hidden');
+  }
+
+  // Live ELO summary strip under board
+  const noteEl = document.getElementById('play-live-elo-note');
+  if (p.liveMovesCount > 0) {
+    const sign = p.liveDelta > 0 ? '+' : '';
+    document.getElementById('play-live-elo-summary').textContent =
+      `Tahmini ELO: ${p.liveElo} (${sign}${p.liveDelta} · başlangıç ${p.humanStartElo})`;
+    document.getElementById('play-live-move-feedback').textContent = p.liveFeedback;
+    noteEl.classList.remove('hidden');
+  } else {
+    noteEl.classList.add('hidden');
+  }
 
   const turn = p.chess.turn();
   const topTurnEl = document.getElementById('play-top-turn');
@@ -709,6 +936,8 @@ function updatePlayUI() {
       .join('');
     mhEl.scrollTop = mhEl.scrollHeight;
   }
+
+  renderLiveEvalPanel();
 }
 
 async function requestTobyReply() {
@@ -719,8 +948,8 @@ async function requestTobyReply() {
   updatePlayUI();
 
   try {
-    const whiteElo = p.humanColor === 'w' ? p.humanElo : p.tobyElo;
-    const blackElo = p.humanColor === 'b' ? p.humanElo : p.tobyElo;
+    const whiteElo = p.humanColor === 'w' ? p.liveElo : p.tobyElo;
+    const blackElo = p.humanColor === 'b' ? p.liveElo : p.tobyElo;
     const res = await playTobyMove({
       moves: p.uciHistory,
       white_rating: whiteElo,
@@ -748,6 +977,9 @@ async function requestTobyReply() {
   } finally {
     p.thinking = false;
     updatePlayUI();
+    if (p.evalEnabled && !p.chess.isGameOver()) {
+      refreshLiveEval();
+    }
   }
 }
 
@@ -757,9 +989,17 @@ function startNewGame() {
   p.uciHistory = [];
   p.thinking = false;
   p.lastAnalysis = null;
+  p.liveEval = null;
   p.humanColor = document.getElementById('sel-human-color').value;
   p.tobyElo = Number(document.getElementById('rng-toby-elo').value);
-  p.humanElo = p.tobyElo;
+  p.humanStartElo = Number(document.getElementById('rng-human-elo').value);
+  p.liveElo = p.humanStartElo;
+  p.liveDelta = 0;
+  p.liveGrid = null;
+  p.liveCurve = null;
+  p.liveMovesCount = 0;
+  p.liveFeedback = '';
+  p.liveSnapshots = [];
   p.timeControl = document.getElementById('sel-play-tc').value;
   p.ratingSource = document.getElementById('sel-play-source').value;
   p.samplingMode = document.getElementById('sel-play-style').value;
@@ -772,6 +1012,8 @@ function startNewGame() {
 
   if (p.humanColor === 'b') {
     requestTobyReply();
+  } else if (p.evalEnabled) {
+    refreshLiveEval();
   }
 }
 
@@ -1086,14 +1328,28 @@ function initApp() {
   state.play.board = new ChessBoardUI(document.getElementById('play-board'), {
     orientation: 'w',
     canMoveColor: (c) => !state.play.thinking && c === state.play.humanColor && !state.play.chess.isGameOver(),
-    onMove: ({ from, to, promotion, uci }) => {
-      const mv = state.play.chess.move({ from, to, promotion });
+    onMove: async ({ from, to, promotion, uci }) => {
+      const p = state.play;
+      const movesBefore = [...p.uciHistory];
+      const mv = p.chess.move({ from, to, promotion });
       if (!mv) return;
-      state.play.uciHistory.push(uci);
-      state.play.board.setArrows([]);
+      // Save snapshot for Undo
+      p.liveSnapshots.push({
+        liveElo: p.liveElo,
+        liveDelta: p.liveDelta,
+        liveGrid: p.liveGrid ? [...p.liveGrid] : null,
+        liveCurve: p.liveCurve ? [...p.liveCurve] : null,
+        liveMovesCount: p.liveMovesCount,
+        liveFeedback: p.liveFeedback,
+      });
+      p.uciHistory.push(uci);
+      p.board.setArrows([]);
       document.getElementById('play-hint-card').classList.add('hidden');
       updatePlayUI();
-      if (!state.play.chess.isGameOver()) {
+
+      // Update live performance ELO on the human's move, then request Toby's reply
+      await updateLiveEloAfterHumanMove(movesBefore, uci);
+      if (!p.chess.isGameOver()) {
         requestTobyReply();
       }
     },
@@ -1118,11 +1374,36 @@ function initApp() {
   });
 
   // Play controls
+  document.getElementById('chk-live-eval').addEventListener('change', (e) => {
+    state.play.evalEnabled = e.target.checked;
+    if (state.play.evalEnabled) {
+      refreshLiveEval();
+    } else {
+      state.play.board.setArrows([]);
+      renderLiveEvalPanel();
+    }
+  });
+  document.getElementById('chk-eval-arrows').addEventListener('change', (e) => {
+    state.play.evalShowArrows = e.target.checked;
+    if (!state.play.evalShowArrows) {
+      state.play.board.setArrows([]);
+    }
+    renderLiveEvalPanel();
+  });
+  document.getElementById('rng-human-elo').addEventListener('input', (e) => {
+    const val = Number(e.target.value);
+    document.getElementById('lbl-human-elo').textContent = String(val);
+    state.play.humanStartElo = val;
+    if (state.play.liveMovesCount === 0) {
+      state.play.liveElo = val;
+      state.play.liveDelta = 0;
+    }
+    updatePlayUI();
+  });
   document.getElementById('rng-toby-elo').addEventListener('input', (e) => {
     const val = Number(e.target.value);
     document.getElementById('lbl-toby-elo').textContent = String(val);
     state.play.tobyElo = val;
-    state.play.humanElo = val;
     updatePlayUI();
   });
   document.getElementById('sel-play-tc').addEventListener('change', (e) => {
@@ -1143,15 +1424,24 @@ function initApp() {
   document.getElementById('btn-play-undo').addEventListener('click', () => {
     const p = state.play;
     if (p.thinking || !p.uciHistory.length) return;
-    // Undo back to human's turn
     p.chess.undo();
     p.uciHistory.pop();
     if (p.chess.turn() !== p.humanColor && p.uciHistory.length) {
       p.chess.undo();
       p.uciHistory.pop();
     }
+    const snap = p.liveSnapshots.pop();
+    if (snap) {
+      p.liveElo = snap.liveElo;
+      p.liveDelta = snap.liveDelta;
+      p.liveGrid = snap.liveGrid;
+      p.liveCurve = snap.liveCurve;
+      p.liveMovesCount = snap.liveMovesCount;
+      p.liveFeedback = snap.liveFeedback;
+    }
     p.board.setArrows([]);
     updatePlayUI();
+    if (p.evalEnabled) refreshLiveEval();
   });
   document.getElementById('btn-send-to-review').addEventListener('click', () => {
     const p = state.play;
@@ -1166,8 +1456,8 @@ function initApp() {
     switchTab('review');
     startGameReview({
       moves: [...p.uciHistory],
-      white_rating: p.tobyElo,
-      black_rating: p.tobyElo,
+      white_rating: isHumanW ? p.humanStartElo : p.tobyElo,
+      black_rating: isHumanW ? p.tobyElo : p.humanStartElo,
       time_control: p.timeControl,
       white_name: isHumanW ? 'Sen' : `Toby (${p.tobyElo})`,
       black_name: isHumanW ? `Toby (${p.tobyElo})` : 'Sen',

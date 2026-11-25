@@ -865,6 +865,143 @@ class TobyEngine:
             "moves": move_reports,
         }
 
+    def evaluate_move_step(
+        self,
+        moves_before: List[str],
+        played_uci: str,
+        start_elo: int = 1800,
+        opp_elo: Optional[int] = None,
+        time_control: str = "Classical",
+        prev_grid: Optional[List[float]] = None,
+        prev_curve: Optional[List[float]] = None,
+        moves_count: int = 0,
+    ) -> Dict[str, Any]:
+        """Run a single 'toby level move' to update a player's live performance ELO incrementally."""
+        board = chess.Board()
+        valid_before: List[str] = []
+        for u in moves_before:
+            mv = chess.Move.from_uci(u)
+            if mv in board.legal_moves:
+                board.push(mv)
+                valid_before.append(u)
+            else:
+                break
+
+        played_mv = chess.Move.from_uci(played_uci)
+        if played_mv not in board.legal_moves:
+            raise ValueError(f"Geçersiz hamle: {played_uci}")
+        played_san = board.san(played_mv)
+
+        tc = time_control if time_control in VALID_TIME_CONTROLS else "Classical"
+        cadence = tc.lower()
+        cal_group = "classical" if cadence == "classical" else "rapidblitz"
+        dist_elo = max(800, min(3000, int(start_elo or 1800)))
+
+        with self.lock:
+            self._ensure_running_locked()
+            if valid_before:
+                self._send("position startpos moves " + " ".join(valid_before))
+            else:
+                self._send("position startpos")
+            self._send(f"toby level move {played_uci} cadence {cadence} dist {dist_elo}")
+            lines = self._read_until("info string toby level end")
+
+        cur_grid: Optional[np.ndarray] = None
+        cur_vals: Optional[np.ndarray] = None
+        cur_dist: Dict[str, float] = {}
+        best_cp: Optional[int] = None
+        played_cp: Optional[int] = None
+
+        for line in lines:
+            if line.startswith("info string toby level end"):
+                parts = line.split()
+                if "best" in parts and "played" in parts:
+                    try:
+                        best_cp = int(parts[parts.index("best") + 1])
+                        played_cp = int(parts[parts.index("played") + 1])
+                    except (ValueError, IndexError):
+                        pass
+            elif line.startswith("info string toby level ") and not (
+                line.startswith("info string toby level error")
+                or line.startswith("info string toby level calibration")
+                or line.startswith("info string toby level display")
+            ):
+                parts = line.split()
+                pairs = parts[5:]
+                rs: List[float] = []
+                ls: List[float] = []
+                for j in range(0, len(pairs) - 1, 2):
+                    rs.append(float(pairs[j]))
+                    ls.append(float(pairs[j + 1]))
+                if rs:
+                    cur_grid = np.array(rs, dtype=float)
+                    cur_vals = np.array(ls, dtype=float)
+            elif line.startswith("info string toby dist "):
+                parts = line.split()
+                pairs = parts[5:]
+                for j in range(0, len(pairs) - 1, 2):
+                    cur_dist[pairs[j]] = float(pairs[j + 1])
+
+        if cur_grid is None or cur_vals is None:
+            raise RuntimeError("Toby level eğrisi hesaplanamadı.")
+
+        if prev_grid and prev_curve and len(prev_grid) == len(cur_grid):
+            sum_curve = np.array(prev_curve, dtype=float) + cur_vals
+        else:
+            sum_curve = cur_vals.copy()
+
+        cal = self.calibration.get(cal_group, DEFAULT_CALIBRATION["classical"])
+        est = estimate_player_rating(
+            cur_grid,
+            sum_curve,
+            cal,
+            known_rating=start_elo,
+            opp_rating=opp_elo or start_elo,
+            player_result=None,
+        )
+
+        # Blend gently during the very first 1-3 moves so the live ELO doesn't swing wildly on move 1
+        n_moves = moves_count + 1
+        blend = min(1.0, n_moves / 4.0)
+        live_elo = int(round(start_elo + blend * (est["rating"] - start_elo)))
+        delta = live_elo - int(start_elo)
+
+        sorted_dist = sorted(cur_dist.items(), key=lambda kv: -kv[1])
+        top_uci = sorted_dist[0][0] if sorted_dist else played_uci
+        top_prob = sorted_dist[0][1] if sorted_dist else 0.0
+        played_prob = cur_dist.get(played_uci, 0.0)
+        is_predicted = played_uci == top_uci
+        try:
+            top_san = board.san(chess.Move.from_uci(top_uci))
+        except Exception:
+            top_san = top_uci
+
+        es_loss = None
+        if best_cp is not None and played_cp is not None:
+            es_b = expected_score_pct(float(dist_elo), max(best_cp, played_cp))
+            es_p = expected_score_pct(float(dist_elo), played_cp)
+            es_loss = round(max(0.0, es_b - es_p), 2)
+
+        badge = classify_move(is_predicted, played_prob, es_loss)
+
+        return {
+            "live_elo": live_elo,
+            "start_elo": int(start_elo),
+            "delta": delta,
+            "raw_estimate": est["rating"],
+            "sd": est["sd"],
+            "moves_count": n_moves,
+            "played_san": played_san,
+            "predicted": is_predicted,
+            "played_prob_pct": round(played_prob * 100.0, 1),
+            "top_move_san": top_san,
+            "top_move_prob_pct": round(top_prob * 100.0, 1),
+            "es_loss": es_loss,
+            "classification": badge,
+            "grid": [float(x) for x in cur_grid],
+            "sum_curve": [round(float(x), 5) for x in sum_curve],
+        }
+
     def close(self) -> None:
         with self.lock:
             if self.proc and self.proc.poll() is None:

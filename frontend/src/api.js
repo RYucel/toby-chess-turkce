@@ -64,6 +64,19 @@ export async function playTobyMove(payload) {
   return res.json();
 }
 
+export async function fetchLevelStep(payload) {
+  const res = await fetch(apiUrl('/api/level-step'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `ELO güncelleme hatası (HTTP ${res.status})`);
+  }
+  return res.json();
+}
+
 export async function streamGameReview(payload, onEvent, signal) {
   const res = await fetch(apiUrl('/api/review'), {
     method: 'POST',

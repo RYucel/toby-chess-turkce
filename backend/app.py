@@ -209,6 +209,34 @@ def play(req: PlayRequest):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+class LevelStepRequest(BaseModel):
+    moves_before: List[str] = Field(default_factory=list)
+    played_uci: str
+    start_elo: int = Field(default=1800, ge=600, le=3200)
+    opp_elo: Optional[int] = None
+    time_control: str = "Classical"
+    prev_grid: Optional[List[float]] = None
+    prev_curve: Optional[List[float]] = None
+    moves_count: int = 0
+
+
+@app.post("/api/level-step")
+def level_step(req: LevelStepRequest):
+    try:
+        return engine.evaluate_move_step(
+            moves_before=req.moves_before,
+            played_uci=req.played_uci,
+            start_elo=req.start_elo,
+            opp_elo=req.opp_elo,
+            time_control=req.time_control,
+            prev_grid=req.prev_grid,
+            prev_curve=req.prev_curve,
+            moves_count=req.moves_count,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.post("/api/review")
 def review(req: ReviewRequest):
     def event_stream():

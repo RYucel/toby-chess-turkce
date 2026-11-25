@@ -1,7 +1,21 @@
+import {
+  OFFLINE_SAMPLE_GAMES,
+  offlineAnalyze,
+  offlineHealth,
+  offlineLevelStep,
+  offlinePlay,
+  offlineReviewGame,
+} from './toby_offline.js';
+
 const STORAGE_KEY = 'toby_server_url';
 
 export function isNativeApp() {
-  return Boolean(typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  return Boolean(
+    typeof window !== 'undefined' &&
+      window.Capacitor &&
+      window.Capacitor.isNativePlatform &&
+      window.Capacitor.isNativePlatform()
+  );
 }
 
 export function getServerUrl() {
@@ -20,18 +34,24 @@ export function setServerUrl(url) {
   }
 }
 
+export function useOfflineEngine() {
+  return isNativeApp() && !getServerUrl();
+}
+
 function apiUrl(path) {
   const base = getServerUrl();
   return `${base}${path}`;
 }
 
 export async function checkHealth() {
+  if (useOfflineEngine()) return offlineHealth();
   const res = await fetch(apiUrl('/api/health'));
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
 export async function fetchSampleGames() {
+  if (useOfflineEngine()) return OFFLINE_SAMPLE_GAMES;
   const res = await fetch(apiUrl('/api/sample-games'));
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
@@ -39,6 +59,7 @@ export async function fetchSampleGames() {
 }
 
 export async function analyzePosition(payload) {
+  if (useOfflineEngine()) return offlineAnalyze(payload);
   const res = await fetch(apiUrl('/api/analyze'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -52,6 +73,7 @@ export async function analyzePosition(payload) {
 }
 
 export async function playTobyMove(payload) {
+  if (useOfflineEngine()) return offlinePlay(payload);
   const res = await fetch(apiUrl('/api/play'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -65,6 +87,7 @@ export async function playTobyMove(payload) {
 }
 
 export async function fetchLevelStep(payload) {
+  if (useOfflineEngine()) return offlineLevelStep(payload);
   const res = await fetch(apiUrl('/api/level-step'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -78,6 +101,9 @@ export async function fetchLevelStep(payload) {
 }
 
 export async function streamGameReview(payload, onEvent, signal) {
+  if (useOfflineEngine()) {
+    return offlineReviewGame(payload, onEvent, signal);
+  }
   const res = await fetch(apiUrl('/api/review'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -1579,10 +1579,7 @@ function initApp() {
 
   if (isNativeApp()) {
     document.getElementById('btn-install-open')?.classList.add('hidden');
-    if (!getServerUrl()) {
-      document.getElementById('inp-server-url').placeholder = 'Örn: http://192.168.1.42:8080';
-      settingsModal.classList.remove('hidden');
-    }
+    document.getElementById('inp-server-url').placeholder = 'Boş = %100 Offline Yerel Toby 2 Motoru';
   }
 
   updatePlayUI();

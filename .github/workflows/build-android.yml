@@ -20,6 +20,11 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
@@ -33,6 +38,18 @@ jobs:
             yes | "$SDK_MGR" --licenses > /dev/null 2>&1 || true
           fi
 
+      - name: Export Official Toby 2.0 INT8 ONNX Models for Offline Android
+        run: |
+          pip install -q --index-url https://download.pytorch.org/whl/cpu torch
+          pip install -q chess numpy onnx onnxruntime onnxscript
+          git clone --depth 1 https://github.com/Yosha87/Toby.git /tmp/toby-src
+          TOBY_INSTALL_DIR=/tmp/toby-engine bash scripts/install_toby.sh
+          python3 scripts/export_toby_onnx.py \
+            --toby-src /tmp/toby-src \
+            --nets-dir /tmp/toby-engine/Toby/nets \
+            --out-dir frontend/android/app/src/main/assets/toby-models
+          ls -lh frontend/android/app/src/main/assets/toby-models
+
       - name: Build Frontend & Sync Capacitor Android
         working-directory: frontend
         run: |
@@ -40,7 +57,7 @@ jobs:
           npm run build
           npx cap sync android
 
-      - name: Build Android APK (assembleDebug)
+      - name: Build 100% Offline Android APK (assembleDebug)
         working-directory: frontend/android
         run: |
           chmod +x gradlew
@@ -48,11 +65,12 @@ jobs:
 
       - name: Rename APK
         run: |
-          cp frontend/android/app/build/outputs/apk/debug/app-debug.apk TobySatranc.apk
+          cp frontend/android/app/build/outputs/apk/debug/app-debug.apk TobySatranc-Offline.apk
+          ls -lh TobySatranc-Offline.apk
 
-      - name: Upload TobySatranc.apk artifact
+      - name: Upload TobySatranc-Offline.apk artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TobySatranc-Android-APK
-          path: TobySatranc.apk
+          name: TobySatranc-Android-Offline-APK
+          path: TobySatranc-Offline.apk
           retention-days: 90

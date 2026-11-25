@@ -11,6 +11,7 @@ frontend/dist/
 
 # Toby 2 binary package (downloaded via scripts/install_toby.sh)
 toby-engine/
+toby-models/
 Toby/
 *.zip
 *.pt

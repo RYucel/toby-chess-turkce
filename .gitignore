@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node / Vite
+node_modules/
+frontend/dist/
+.vite/
+
+# Toby 2 binary package (downloaded via scripts/install_toby.sh)
+toby-engine/
+Toby/
+*.zip
+*.pt
+*.onnx
+*.pb.gz
+
+# PyInstaller / Build
+dist/
+build/
+*.spec
+release_win/
+
+# OS / IDE
+.DS_Store
+.env
+*.log

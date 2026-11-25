@@ -1,0 +1,56 @@
+name: Build Windows Executable (TobySatranc.exe)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build Frontend PWA
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Python dependencies & PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt pyinstaller
+
+      - name: Build TobySatranc.exe
+        run: |
+          pyinstaller --noconfirm --clean --onefile --name TobySatranc --paths backend --add-data "frontend/dist;frontend/dist" --hidden-import uvicorn.logging --hidden-import uvicorn.loops.auto --hidden-import uvicorn.protocols.http.auto --hidden-import uvicorn.protocols.websockets.auto --hidden-import uvicorn.lifespan.on backend/app.py
+
+      - name: Package Windows Release Zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release_win | Out-Null
+          Copy-Item dist/TobySatranc.exe release_win/
+          Copy-Item README.md release_win/
+          Compress-Archive -Path release_win/* -DestinationPath TobySatranc-Windows.zip -Force
+
+      - name: Upload TobySatranc-Windows.zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TobySatranc-Windows
+          path: TobySatranc-Windows.zip
+          retention-days: 90

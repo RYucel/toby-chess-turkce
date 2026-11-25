@@ -63,37 +63,52 @@ def ensure_toby_downloaded_if_missing() -> Optional[str]:
 
     target_dir = _app_base_dir()
     platform_key = "windows" if os.name == "nt" else "linux"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+    }
     print("\n[Toby Satranç] Toby 2 motoru bulunamadı. Resmi paket indiriliyor...")
     try:
-        with urllib.request.urlopen(MANIFEST_URL, timeout=20) as resp:
+        manifest_req = urllib.request.Request(MANIFEST_URL, headers=headers)
+        with urllib.request.urlopen(manifest_req, timeout=25) as resp:
             manifest = json.loads(resp.read().decode("utf-8"))
         filename = manifest[platform_key]["light"]["fichier"]
         url = f"https://toby.tribychess.org/{filename}"
         zip_path = target_dir / filename
-        print(f"[Toby Satranç] İndiriliyor: {url}")
+        print(f"[Toby Satranç] İndiriliyor: {url}", flush=True)
 
-        last_pct = -1
+        dl_req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(dl_req, timeout=60) as resp:
+            total_size = int(resp.headers.get("Content-Length") or 0)
+            downloaded = 0
+            last_pct = -1
+            with open(zip_path, "wb") as out_f:
+                while True:
+                    chunk = resp.read(262144)
+                    if not chunk:
+                        break
+                    out_f.write(chunk)
+                    downloaded += len(chunk)
+                    if total_size > 0:
+                        pct = min(100, int(downloaded * 100 / total_size))
+                        if pct >= last_pct + 5:
+                            last_pct = pct
+                            mb_done = downloaded / (1024 * 1024)
+                            mb_tot = total_size / (1024 * 1024)
+                            print(f"[Toby Satranç] İndirme: %{pct} ({mb_done:.0f} / {mb_tot:.0f} MB)", flush=True)
 
-        def _hook(blocks: int, block_size: int, total_size: int) -> None:
-            nonlocal last_pct
-            if total_size > 0:
-                pct = min(100, int(blocks * block_size * 100 / total_size))
-                if pct >= last_pct + 5:
-                    last_pct = pct
-                    print(f"[Toby Satranç] İndirme: %{pct}", flush=True)
-
-        urllib.request.urlretrieve(url, str(zip_path), reporthook=_hook)
-        print("[Toby Satranç] Arşiv açılıyor...")
+        print("[Toby Satranç] Arşiv açılıyor...", flush=True)
         with zipfile.ZipFile(zip_path, "r") as zf:
             zf.extractall(target_dir)
         zip_path.unlink(missing_ok=True)
         binary = find_toby_binary()
         if binary and os.name != "nt":
             os.chmod(binary, 0o755)
-        print(f"[Toby Satranç] Toby 2 kuruldu: {binary}\n")
+        print(f"[Toby Satranç] Toby 2 kuruldu: {binary}\n", flush=True)
         return binary
     except Exception as exc:  # noqa: BLE001
         print(f"[Toby Satranç] Otomatik indirme başarısız: {exc}")
+        print("[Toby Satranç] Manuel kurulum: https://toby.tribychess.org adresinden Toby-light zip'ini indirip 'Toby' klasörünü bu .exe yanına çıkarın.")
         return None
 
 

@@ -41,15 +41,35 @@ def _dist_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
-def _get_lan_ip() -> Optional[str]:
+def _get_lan_ips() -> List[str]:
+    ips: List[str] = []
+    try:
+        hostname = socket.gethostname()
+        for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            ip = info[4][0]
+            if ip and not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
+        primary = s.getsockname()[0]
         s.close()
-        return ip
+        if primary and not primary.startswith("127.") and primary not in ips:
+            ips.append(primary)
     except Exception:  # noqa: BLE001
-        return None
+        pass
+
+    def _priority(ip: str) -> int:
+        if ip.startswith("192.168."):
+            return 0
+        if ip.startswith("10."):
+            return 1
+        return 2
+
+    ips.sort(key=_priority)
+    return ips
 
 
 def ensure_toby_downloaded_if_missing() -> Optional[str]:
@@ -297,13 +317,17 @@ if __name__ == "__main__":
         if found:
             engine.binary_path = found
 
-    lan_ip = _get_lan_ip()
-    print("=" * 56)
+    lan_ips = _get_lan_ips()
+    print("=" * 60)
     print("  Toby Satranç PWA (Toby 2 - The Oracle By Yosha)")
     print(f"  Bilgisayar : http://127.0.0.1:{port}")
-    if lan_ip:
-        print(f"  Telefon    : http://{lan_ip}:{port}  (Aynı Wi-Fi)")
-    print("=" * 56, flush=True)
+    for idx, ip in enumerate(lan_ips):
+        tag = "Önerilen Wi-Fi" if ip.startswith("192.168.") else "Alternatif Ağ"
+        print(f"  Telefon #{idx + 1} : http://{ip}:{port}  ({tag})")
+    if os.name == "nt":
+        print("  Not        : Telefon bağlanmazsa Windows Güvenlik Duvarı'nda")
+        print(f"               TCP {port} portuna izin verin (Özel ağlar).")
+    print("=" * 60, flush=True)
 
     if getattr(sys, "frozen", False):
         def _open_browser():

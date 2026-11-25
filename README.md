@@ -54,7 +54,12 @@ Varsayılan olarak `http://0.0.0.0:8080` üzerinde çalışır.
   .\scripts\build_windows.ps1
   ```
 
-## Telefona Nasıl Kurulur?
+## Android Uygulaması (`TobySatranc.apk`)
+
+- **Hazır `.apk` İndirme**: GitHub deposundaki **Actions → Build Android APK (TobySatranc.apk)** sekmesinden `TobySatranc-Android-APK` paketini indirip telefonunuza doğrudan kurabilirsiniz.
+- **Bağlantı**: Toby 2 motoru (~690 MB PyTorch + Stockfish 19) bilgisayarınızda (`TobySatranc.exe` veya `python3 backend/app.py`) çalışır. Android uygulamasını ilk açtığınızda karşınıza çıkan sunucu ayarına bilgisayarınızın ekranda gösterdiği `http://192.168.x.x:8080` (veya uzaktan erişim için tünel/VPS) adresini girmeniz yeterlidir.
+
+## Telefona PWA Olarak Kurulum
 
 1. Windows'ta `TobySatranc.exe`'yi çift tıklayın (veya Linux/macOS'ta `python3 backend/app.py` çalıştırın).
 2. Telefonunuzla aynı Wi-Fi ağındaysanız terminalde gösterilen `http://<BILGISAYAR_IP>:8080` adresini (veya HTTPS PWA kurulumu için Cloudflare Tunnel / Tailscale HTTPS adresinizi) telefon tarayıcısında açın.

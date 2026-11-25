@@ -1,0 +1,13 @@
+{
+  "appId": "com.toby.satranc",
+  "appName": "Toby Satranç",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#141311"
+  }
+}

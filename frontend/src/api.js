@@ -1,11 +1,18 @@
 const STORAGE_KEY = 'toby_server_url';
 
+export function isNativeApp() {
+  return Boolean(typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+}
+
 export function getServerUrl() {
   return (localStorage.getItem(STORAGE_KEY) || '').replace(/\/+$/, '');
 }
 
 export function setServerUrl(url) {
-  const cleaned = (url || '').trim().replace(/\/+$/, '');
+  let cleaned = (url || '').trim().replace(/\/+$/, '');
+  if (cleaned && !/^https?:\/\//i.test(cleaned)) {
+    cleaned = `http://${cleaned}`;
+  }
   if (cleaned) {
     localStorage.setItem(STORAGE_KEY, cleaned);
   } else {

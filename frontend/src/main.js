@@ -6,13 +6,14 @@ import {
   checkHealth,
   fetchSampleGames,
   getServerUrl,
+  isNativeApp,
   playTobyMove,
   setServerUrl,
   streamGameReview,
 } from './api.js';
 
-// Register PWA Service Worker
-if ('serviceWorker' in navigator) {
+// Register PWA Service Worker (browser only; Capacitor bundles assets natively)
+if ('serviceWorker' in navigator && !isNativeApp()) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
   });
@@ -1285,6 +1286,14 @@ function initApp() {
   };
   document.getElementById('btn-install-pwa').addEventListener('click', triggerInstall);
   document.getElementById('btn-install-trigger').addEventListener('click', triggerInstall);
+
+  if (isNativeApp()) {
+    document.getElementById('btn-install-open')?.classList.add('hidden');
+    if (!getServerUrl()) {
+      document.getElementById('inp-server-url').placeholder = 'Örn: http://192.168.1.42:8080';
+      settingsModal.classList.remove('hidden');
+    }
+  }
 
   updatePlayUI();
   refreshHealth();
